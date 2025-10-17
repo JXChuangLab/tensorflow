@@ -9,6 +9,9 @@
 #include "tensorflow/lite/delegates/gpu/common/types.h"
 #include "tensorflow/lite/delegates/gpu/api.h"
 #include "tensorflow/lite/delegates/gpu/gl/api2.h"
+#define GL_NO_PROTOTYPES
+#include "tensorflow/lite/delegates/gpu/gl/portable_gl31.h"
+#undef GL_NO_PROTOTYPES
 #include "tensorflow/lite/kernels/register.h"
 #include "tensorflow/lite/model.h"
 
@@ -27,6 +30,11 @@ class LiteGpuModelImpl {
   int input_h = 0;
   int input_c = 4;  // 通常对齐为 4
   bool use_fp16 = true;
+
+  // 纹理->SSBO 转换资源
+  GLuint convert_program = 0;  // compute program
+  GLuint input_ssbo = 0;       // 输入 SSBO（与模型输入尺寸匹配）
+  GLsizei ssbo_size_bytes = 0;
 };
 
 static void FillOptionsFromPriority(TfLiteGpuPriority pri, bool* use_fp16,
@@ -132,10 +140,87 @@ TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path,
 }
 
 TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeTexture(TfLiteGpuModel model,
-                                                    uint32_t /*texture_id*/,
-                                                    int /*width*/, int /*height*/) {
-  // GL api2 外部对象目前不支持直接绑定纹理作为输入，请使用 SSBO 绑定接口。
-  (void)model; return false;
+                                                    uint32_t texture_id,
+                                                    int width, int height) {
+  auto* impl = static_cast<LiteGpuModelImpl*>(model);
+  if (!impl || !impl->runner) return false;
+  if (width != impl->input_w || height != impl->input_h) return false;
+
+  // 1) 创建/复用 SSBO
+  const int channels = impl->input_c > 0 ? impl->input_c : 4;
+  const GLsizei need_bytes = static_cast<GLsizei>(width) * height * 4 * sizeof(float);
+  if (impl->input_ssbo == 0 || impl->ssbo_size_bytes != need_bytes) {
+    if (impl->input_ssbo != 0) {
+      glDeleteBuffers(1, &impl->input_ssbo);
+      impl->input_ssbo = 0;
+    }
+    glGenBuffers(1, &impl->input_ssbo);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, impl->input_ssbo);
+    glBufferData(GL_SHADER_STORAGE_BUFFER, need_bytes, nullptr, GL_DYNAMIC_DRAW);
+    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0);
+    impl->ssbo_size_bytes = need_bytes;
+  }
+
+  // 2) 构建 compute 程序（一次）
+  if (impl->convert_program == 0) {
+    const char* cs =
+        "#version 310 es\n"
+        "layout(local_size_x=8, local_size_y=8) in;\n"
+        "layout(binding=0, rgba8) uniform readonly lowp image2D srcImg;\n"
+        "layout(std430, binding=1) buffer OutSSBO { float data[]; };\n"
+        "uniform int width;\n"
+        "uniform int height;\n"
+        "uniform int channels;\n"
+        "void main(){\n"
+        "  uvec2 gid = gl_GlobalInvocationID.xy;\n"
+        "  if (gid.x>=uint(width) || gid.y>=uint(height)) return;\n"
+        "  vec4 pix = imageLoad(srcImg, ivec2(gid));\n"
+        "  int x=int(gid.x); int y=int(gid.y);\n"
+        "  int base = ((0*height + y)*width + x)*4;\n"
+        "  data[base+0] = pix.r;\n"
+        "  data[base+1] = (channels>1)?pix.g:0.0;\n"
+        "  data[base+2] = (channels>2)?pix.b:0.0;\n"
+        "  data[base+3] = (channels>3)?pix.a:0.0;\n"
+        "}\n";
+
+    GLuint shader = glCreateShader(GL_COMPUTE_SHADER);
+    glShaderSource(shader, 1, &cs, nullptr);
+    glCompileShader(shader);
+    GLint ok = GL_FALSE; glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (!ok) { glDeleteShader(shader); return false; }
+    impl->convert_program = glCreateProgram();
+    glAttachShader(impl->convert_program, shader);
+    glLinkProgram(impl->convert_program);
+    glDeleteShader(shader);
+    glGetProgramiv(impl->convert_program, GL_LINK_STATUS, &ok);
+    if (!ok) { glDeleteProgram(impl->convert_program); impl->convert_program=0; return false; }
+  }
+
+  // 3) 绑定纹理为 image0，绑定 SSBO 为 binding=1，调度计算
+  glUseProgram(impl->convert_program);
+  GLint loc_w = glGetUniformLocation(impl->convert_program, "width");
+  GLint loc_h = glGetUniformLocation(impl->convert_program, "height");
+  GLint loc_c = glGetUniformLocation(impl->convert_program, "channels");
+  if (loc_w>=0) glUniform1i(loc_w, width);
+  if (loc_h>=0) glUniform1i(loc_h, height);
+  if (loc_c>=0) glUniform1i(loc_c, channels);
+
+  glBindImageTexture(0, static_cast<GLuint>(texture_id), 0, GL_FALSE, 0, GL_READ_ONLY, GL_RGBA8);
+  glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1, impl->input_ssbo);
+
+  const GLuint gx = (width + 7) / 8;
+  const GLuint gy = (height + 7) / 8;
+  glDispatchCompute(gx, gy, 1);
+  glMemoryBarrier(GL_SHADER_STORAGE_BARRIER_BIT | GL_BUFFER_UPDATE_BARRIER_BIT);
+
+  // 4) 将 SSBO 绑定为 InferenceRunner 的输入对象
+  tg::OpenGlBuffer buffer; buffer.id = impl->input_ssbo;
+  tg::TensorObject in_obj = buffer;
+  auto si = impl->runner->SetInputObject(0, in_obj);
+  if (!si.ok()) return false;
+
+  auto rs = impl->runner->Run();
+  return rs.ok();
 }
 
 TFLITE_WRAP_EXPORT bool TfLiteGpuModelBindInputSSBO(TfLiteGpuModel model,
