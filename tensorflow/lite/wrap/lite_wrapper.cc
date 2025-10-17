@@ -90,11 +90,11 @@ TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path,
   auto nb = env->NewInferenceBuilder(std::move(graph), gl_opts, &builder);
   if (!nb.ok() || !builder) { delete impl; return nullptr; }
 
-  // 输入定义：外部提供 OPENGL_TEXTURE；布局 DHWC4；数据类型按精度选择
+  // 输入定义：外部提供 OPENGL_SSBO；布局 DHWC4；数据类型按精度选择
   tg::ObjectDef in_def;
   in_def.data_type = impl->use_fp16 ? tg::DataType::FLOAT16 : tg::DataType::FLOAT32;
   in_def.data_layout = tg::DataLayout::DHWC4;
-  in_def.object_type = tg::ObjectType::OPENGL_TEXTURE;
+  in_def.object_type = tg::ObjectType::OPENGL_SSBO;
   in_def.user_provided = true;
 
   auto input_defs = builder->inputs();
@@ -132,22 +132,31 @@ TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path,
 }
 
 TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeTexture(TfLiteGpuModel model,
-                                                    uint32_t texture_id,
-                                                    int width, int height) {
+                                                    uint32_t /*texture_id*/,
+                                                    int /*width*/, int /*height*/) {
+  // GL api2 外部对象目前不支持直接绑定纹理作为输入，请使用 SSBO 绑定接口。
+  (void)model; return false;
+}
+
+TFLITE_WRAP_EXPORT bool TfLiteGpuModelBindInputSSBO(TfLiteGpuModel model,
+                                                    uint32_t ssbo_id) {
   auto* impl = static_cast<LiteGpuModelImpl*>(model);
   if (!impl || !impl->runner) return false;
-  if (width != impl->input_w || height != impl->input_h) {
-    // 保持零拷贝：不在内部做 resize。
-    return false;
-  }
-
-  tg::OpenGlTexture tex{static_cast<GLuint>(texture_id), GL_RGBA8};
-  tg::TensorObject in_obj = tex;
+  tg::OpenGlBuffer buffer; buffer.id = static_cast<GLuint>(ssbo_id);
+  tg::TensorObject in_obj = buffer;
   auto si = impl->runner->SetInputObject(0, in_obj);
-  if (!si.ok()) return false;
+  return si.ok();
+}
 
-  auto rs = impl->runner->Run();
-  return rs.ok();
+TFLITE_WRAP_EXPORT bool TfLiteGpuModelBindOutputSSBO(TfLiteGpuModel model,
+                                                     int index,
+                                                     uint32_t ssbo_id) {
+  auto* impl = static_cast<LiteGpuModelImpl*>(model);
+  if (!impl || !impl->runner) return false;
+  tg::OpenGlBuffer buffer; buffer.id = static_cast<GLuint>(ssbo_id);
+  tg::TensorObject out_obj = buffer;
+  auto so = impl->runner->SetOutputObject(index, out_obj);
+  return so.ok();
 }
 
 TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeBuffer(TfLiteGpuModel model,

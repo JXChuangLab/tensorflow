@@ -75,6 +75,10 @@ TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path, T
  */
 TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeTexture(TfLiteGpuModel model, uint32_t texture_id, int width, int height);
 
+// 如果需要走 SSBO（推荐）：在创建后绑定输入/输出 SSBO，然后调用 Invoke（用 GetOutput 从 CPU 读也可）
+TFLITE_WRAP_EXPORT bool TfLiteGpuModelBindInputSSBO(TfLiteGpuModel model, uint32_t ssbo_id);
+TFLITE_WRAP_EXPORT bool TfLiteGpuModelBindOutputSSBO(TfLiteGpuModel model, int index, uint32_t ssbo_id);
+
 /**
  * 使用缓冲区进行推理（CPU 内存输入，期望 float32 BHWC）
  */
