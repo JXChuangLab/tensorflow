@@ -1,0 +1,118 @@
+cmake_minimum_required(VERSION 3.16)
+project(TfLiteGpuWrapper)
+
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# 设置编译选项
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility=hidden")
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fvisibility-inlines-hidden")
+
+# 查找必要的包
+find_package(PkgConfig REQUIRED)
+
+# 查找OpenGL
+find_package(OpenGL REQUIRED)
+
+# 查找EGL（如果需要）
+find_package(EGL REQUIRED)
+
+# 查找TensorFlow Lite
+find_package(TensorFlowLite REQUIRED)
+
+# 查找MediaPipe相关库
+# 注意：这里需要根据实际的MediaPipe安装路径调整
+set(MEDIAPIPE_ROOT "/path/to/mediapipe" CACHE PATH "MediaPipe root directory")
+
+# 包含目录
+include_directories(
+    ${CMAKE_CURRENT_SOURCE_DIR}
+    ${OpenGL_INCLUDE_DIRS}
+    ${EGL_INCLUDE_DIRS}
+    ${TensorFlowLite_INCLUDE_DIRS}
+    ${MEDIAPIPE_ROOT}
+    ${MEDIAPIPE_ROOT}/mediapipe
+    ${MEDIAPIPE_ROOT}/third_party
+    ${MEDIAPIPE_ROOT}/third_party/absl
+    ${MEDIAPIPE_ROOT}/third_party/tensorflow
+)
+
+# 链接目录
+link_directories(
+    ${TensorFlowLite_LIBRARY_DIRS}
+    ${MEDIAPIPE_ROOT}/bazel-bin
+)
+
+# 创建共享库
+add_library(tflite_gpu_wrapper SHARED
+    lite_wrapper.cpp
+)
+
+# 链接库
+target_link_libraries(tflite_gpu_wrapper
+    ${OpenGL_LIBRARIES}
+    ${EGL_LIBRARIES}
+    tensorflowlite
+    # MediaPipe相关库
+    mediapipe_util_tflite_gpu_runner
+    mediapipe_gpu_gl_calculator_helper
+    mediapipe_gpu_gl_context
+    mediapipe_framework_port_status_macros
+    mediapipe_framework_port_ret_check
+    mediapipe_framework_port_logging
+    # Abseil库
+    absl_log_internal_message
+    absl_log_internal_log_impl
+    absl_log_internal_check_op
+    absl_log_internal_conditions
+    absl_log_internal_strip
+    absl_log_internal_format
+    absl_log_internal_globals
+    absl_log_internal_proto
+    absl_log_internal_structured
+    absl_log_internal_vlog
+    absl_log_internal_check_op
+    absl_log_internal_conditions
+    absl_log_internal_strip
+    absl_log_internal_format
+    absl_log_internal_globals
+    absl_log_internal_proto
+    absl_log_internal_structured
+    absl_log_internal_vlog
+    absl_status
+    absl_statusor
+    absl_strings
+    absl_time
+    # TensorFlow Lite相关
+    tensorflow_lite
+    tensorflow_lite_kernels
+    tensorflow_lite_delegates_gpu_gl
+    tensorflow_lite_delegates_gpu_cl
+    tensorflow_lite_delegates_gpu_common
+    tensorflow_lite_delegates_gpu_api
+)
+
+# 设置库的导出符号
+set_target_properties(tflite_gpu_wrapper PROPERTIES
+    VERSION 1.0.0
+    SOVERSION 1
+    PUBLIC_HEADER lite_wrapper.h
+)
+
+# 安装规则
+install(TARGETS tflite_gpu_wrapper
+    LIBRARY DESTINATION lib
+    PUBLIC_HEADER DESTINATION include
+)
+
+# 创建示例程序
+add_executable(example_usage example_usage.cpp)
+target_link_libraries(example_usage tflite_gpu_wrapper)
+
+# 创建测试程序
+add_executable(test_wrapper test_wrapper.cpp)
+target_link_libraries(test_wrapper tflite_gpu_wrapper)
+
+# 如果支持，添加测试
+enable_testing()
+add_test(NAME test_wrapper COMMAND test_wrapper)
