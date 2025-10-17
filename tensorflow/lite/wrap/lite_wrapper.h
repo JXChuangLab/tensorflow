@@ -1,69 +1,98 @@
-#pragma once
+// -*- header -*-
+#ifndef TENSORFLOW_LITE_WRAP_LITE_WRAPPER_H_
+#define TENSORFLOW_LITE_WRAP_LITE_WRAPPER_H_
 
-#include <stdint.h>
-#include <stddef.h>
+#include <cstdint>
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#ifndef TFLITE_WRAP_EXPORT
-#define TFLITE_WRAP_EXPORT __attribute__((visibility("default")))
-#endif
+// 定义导出宏
+#define TFLITE_WRAP_EXPORT __attribute__ ((visibility("default")))
 
-// GPU 优先级（与 TFLite GPU 语义对齐）
-typedef enum {
-  TFLITE_GPU_PRIORITY_AUTO = 0,
-  TFLITE_GPU_PRIORITY_MIN_LATENCY = 1,
-  TFLITE_GPU_PRIORITY_MIN_MEMORY_USAGE = 2,
-  TFLITE_GPU_PRIORITY_MAX_PRECISION = 3,
-} TfLiteGpuPriority;
-
-// 输出结构（CPU 读取用；GPU 零拷贝场景通常不需要）
-typedef struct TfLiteOutput {
-  float* data;     // 输出数据指针（float）
-  int size;        // 元素个数（float 计）
-  int width;
-  int height;
-  int channels;
-} TfLiteOutput;
-
-#ifndef TFLITE_MAX_OUTPUTS
-#define TFLITE_MAX_OUTPUTS 8
-#endif
-
-typedef struct TfLiteOutputs {
-  int size;  // 实际输出数量
-  TfLiteOutput outputs[TFLITE_MAX_OUTPUTS];
-} TfLiteOutputs;
-
-// 句柄类型
+// 前向声明句柄类型
 typedef void* TfLiteGpuModel;
 
-// 创建基于 GPU(InferenceRunner) 的模型运行器
-// prefer_fp16 缺省走 FP16（允许精度损失）
-TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(
-    const char* model_path, TfLiteGpuPriority priority);
+// GPU 委托优先级
+typedef enum {
+    TFLITE_GPU_PRIORITY_AUTO = 0,
+    TFLITE_GPU_PRIORITY_MAX_PRECISION = 1,
+    TFLITE_GPU_PRIORITY_MIN_LATENCY = 2,
+    TFLITE_GPU_PRIORITY_MIN_MEMORY_USAGE = 3,
+} TfLiteGpuPriority;
 
-// 以 GL_TEXTURE_2D 纹理作为输入进行一次推理（零拷贝）。
-// width/height 必须与模型输入一致；output_texture_2d 可传 0 表示不绑定输出。
-TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeTexture(
-    TfLiteGpuModel model, uint32_t texture_id, int width, int height);
+// 输入数据类型
+typedef enum {
+    TFLITE_INPUT_TEXTURE_2D = 0,    // GLES 纹理输入
+    TFLITE_INPUT_BUFFER = 1,        // 内存缓冲区输入
+} TfLiteInputType;
 
-// 使用 CPU 缓冲作为输入进行一次推理（如需）。GPU 路径不保证零拷贝。
-TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeBuffer(
-    TfLiteGpuModel model, const void* input_data, int width, int height, int channels);
+// 输入数据结构
+typedef struct {
+    TfLiteInputType type;
+    union {
+        uint32_t texture_id;  // 当 type = TFLITE_INPUT_TEXTURE_2D 时使用
+        struct {
+            const void* data; // 当 type = TFLITE_INPUT_BUFFER 时使用
+            int width;
+            int height;
+            int channels;
+        } buffer;
+    };
+} TfLiteInput;
 
-// 读取所有输出到 CPU（如需）。GPU 零拷贝场景一般不调用。返回 false 表示未实现或失败。
-TFLITE_WRAP_EXPORT bool TfLiteGpuModelGetOutputs(
-    TfLiteGpuModel model, TfLiteOutputs* outputs);
+// 输出数据结构
+typedef struct {
+    const float* data;   // 输出数据指针
+    int size;           // 数据大小（元素个数）
+    int width;          // 输出宽度
+    int height;         // 输出高度
+    int channels;       // 输出通道数
+} TfLiteOutput;
 
-// 释放
+
+typedef struct {
+    TfLiteOutput* outputs; // 输出数组指针（调用方提供，size 作为容量传入）
+    int size;       // 输入：容量；输出：实际填充个数
+} TfLiteOutputs;
+
+/**
+ * 创建 GPU 模型实例
+ * @param model_path 模型文件路径
+ * @param priority GPU 优先级
+ * @return 模型句柄，失败返回 NULL
+ */
+TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path, TfLiteGpuPriority priority);
+
+/**
+ * 使用纹理进行推理
+ * @param model 模型句柄
+ * @param texture_id 输入纹理 ID
+ * @param width 纹理宽度
+ * @param height 纹理高度
+ * @return 成功返回 true，失败返回 false
+ */
+TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeTexture(TfLiteGpuModel model, uint32_t texture_id, int width, int height);
+
+/**
+ * 使用缓冲区进行推理（CPU 内存输入，期望 float32 BHWC）
+ */
+TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeBuffer(TfLiteGpuModel model, const void* input_data, int width, int height, int channels);
+
+/**
+ * 获取推理输出（CPU 指针，不拷贝数据；调用方提供 outputs->outputs 缓冲及容量）
+ */
+TFLITE_WRAP_EXPORT bool TfLiteGpuModelGetOutput(TfLiteGpuModel model, TfLiteOutputs* outputs);
+
+/** 释放模型资源 */
 TFLITE_WRAP_EXPORT void TfLiteGpuModelDelete(TfLiteGpuModel model);
 
-// 版本
+/** 获取库版本号 */
 TFLITE_WRAP_EXPORT const char* TfLiteWrapperVersion();
 
 #ifdef __cplusplus
-}  // extern "C"
+}
 #endif
+
+#endif  // TENSORFLOW_LITE_WRAP_LITE_WRAPPER_H_
