@@ -1,0 +1,1 @@
+/usr/bin/c++ -fvisibility=hidden -fvisibility-inlines-hidden -fvisibility=hidden -fvisibility-inlines-hidden -O3 -DNDEBUG -Xlinker --dependency-file=CMakeFiles/example_usage_minimal.dir/link.d CMakeFiles/example_usage_minimal.dir/example_usage.cpp.o -o example_usage_minimal  -Wl,-rpath,/workspace/build_minimal libtflite_gpu_wrapper_minimal.so.1.0.0

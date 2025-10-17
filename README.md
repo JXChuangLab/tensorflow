@@ -1,173 +1,241 @@
-<div align="center">
-  <img src="https://www.tensorflow.org/images/tf_logo_horizontal.png">
-</div>
+# TFLite GPU 推理包装器
 
-[![Python](https://img.shields.io/pypi/pyversions/tensorflow.svg)](https://badge.fury.io/py/tensorflow)
-[![PyPI](https://badge.fury.io/py/tensorflow.svg)](https://badge.fury.io/py/tensorflow)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.4724125.svg)](https://doi.org/10.5281/zenodo.4724125)
-[![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/1486/badge)](https://bestpractices.coreinfrastructure.org/projects/1486)
-[![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/tensorflow/tensorflow/badge)](https://securityscorecards.dev/viewer/?uri=github.com/tensorflow/tensorflow)
-[![Fuzzing Status](https://oss-fuzz-build-logs.storage.googleapis.com/badges/tensorflow.svg)](https://bugs.chromium.org/p/oss-fuzz/issues/list?sort=-opened&can=1&q=proj:tensorflow)
-[![Fuzzing Status](https://oss-fuzz-build-logs.storage.googleapis.com/badges/tensorflow-py.svg)](https://bugs.chromium.org/p/oss-fuzz/issues/list?sort=-opened&can=1&q=proj:tensorflow-py)
-[![OSSRank](https://shields.io/endpoint?url=https://ossrank.com/shield/44)](https://ossrank.com/p/44)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-v1.4%20adopted-ff69b4.svg)](CODE_OF_CONDUCT.md)
+基于MediaPipe的TFLite GPU推理包装器，支持纹理输入和SSBO（Shader Storage Buffer Object）进行GPU推理。
 
-**`Documentation`** |
-------------------- |
-[![Documentation](https://img.shields.io/badge/api-reference-blue.svg)](https://www.tensorflow.org/api_docs/) |
+## 功能特性
 
-[TensorFlow](https://www.tensorflow.org/) is an end-to-end open source platform
-for machine learning. It has a comprehensive, flexible ecosystem of
-[tools](https://www.tensorflow.org/resources/tools),
-[libraries](https://www.tensorflow.org/resources/libraries-extensions), and
-[community](https://www.tensorflow.org/community) resources that lets
-researchers push the state-of-the-art in ML and developers easily build and
-deploy ML-powered applications.
+- ✅ 支持OpenGL纹理输入
+- ✅ 支持CPU内存缓冲区输入
+- ✅ 支持SSBO绑定进行GPU推理
+- ✅ 基于MediaPipe的TFLite GPU Runner
+- ✅ 支持多种GPU优先级设置
+- ✅ 完整的C接口，易于集成
 
-TensorFlow was originally developed by researchers and engineers working within
-the Machine Intelligence team at Google Brain to conduct research in machine
-learning and neural networks. However, the framework is versatile enough to be
-used in other areas as well.
+## 依赖项
 
-TensorFlow provides stable [Python](https://www.tensorflow.org/api_docs/python)
-and [C++](https://www.tensorflow.org/api_docs/cc) APIs, as well as a
-non-guaranteed backward compatible API for
-[other languages](https://www.tensorflow.org/api_docs).
+- TensorFlow Lite
+- MediaPipe
+- OpenGL ES 3.1+ 或 OpenGL 4.3+
+- EGL
+- Abseil库
 
-Keep up-to-date with release announcements and security updates by subscribing
-to
-[announce@tensorflow.org](https://groups.google.com/a/tensorflow.org/forum/#!forum/announce).
-See all the [mailing lists](https://www.tensorflow.org/community/forums).
+## 构建
 
-## Install
-
-See the [TensorFlow install guide](https://www.tensorflow.org/install) for the
-[pip package](https://www.tensorflow.org/install/pip), to
-[enable GPU support](https://www.tensorflow.org/install/gpu), use a
-[Docker container](https://www.tensorflow.org/install/docker), and
-[build from source](https://www.tensorflow.org/install/source).
-
-To install the current release, which includes support for
-[CUDA-enabled GPU cards](https://www.tensorflow.org/install/gpu) *(Ubuntu and
-Windows)*:
-
-```
-$ pip install tensorflow
+```bash
+mkdir build
+cd build
+cmake ..
+make -j4
 ```
 
-Other devices (DirectX and MacOS-metal) are supported using
-[Device Plugins](https://www.tensorflow.org/install/gpu_plugins#available_devices).
+## 使用方法
 
-A smaller CPU-only package is also available:
+### 基本使用
 
-```
-$ pip install tensorflow-cpu
-```
+```cpp
+#include "lite_wrapper.h"
 
-To update TensorFlow to the latest version, add `--upgrade` flag to the above
-commands.
+// 1. 创建GPU模型
+TfLiteGpuModel model = TfLiteGpuModelCreate("model.tflite", TFLITE_GPU_PRIORITY_MAX_PRECISION);
 
-*Nightly binaries are available for testing using the
-[tf-nightly](https://pypi.python.org/pypi/tf-nightly) and
-[tf-nightly-cpu](https://pypi.python.org/pypi/tf-nightly-cpu) packages on PyPI.*
+// 2. 使用纹理进行推理
+bool success = TfLiteGpuModelInvokeTexture(model, texture_id, 224, 224);
 
-#### *Try your first TensorFlow program*
+// 3. 获取输出
+TfLiteOutputs outputs;
+TfLiteOutput output_buffer[10];
+outputs.outputs = output_buffer;
+outputs.size = 10;
+TfLiteGpuModelGetOutput(model, &outputs);
 
-```shell
-$ python
-```
-
-```python
->>> import tensorflow as tf
->>> tf.add(1, 2).numpy()
-3
->>> hello = tf.constant('Hello, TensorFlow!')
->>> hello.numpy()
-b'Hello, TensorFlow!'
+// 4. 清理资源
+TfLiteGpuModelDelete(model);
 ```
 
-For more examples, see the
-[TensorFlow Tutorials](https://www.tensorflow.org/tutorials/).
+### 纹理输入推理
 
-## Contribution guidelines
+```cpp
+// 假设你有一个OpenGL纹理
+uint32_t texture_id = get_opengl_texture_id();
+int width = 224;
+int height = 224;
 
-**If you want to contribute to TensorFlow, be sure to review the
-[Contribution Guidelines](CONTRIBUTING.md). This project adheres to TensorFlow's
-[Code of Conduct](CODE_OF_CONDUCT.md). By participating, you are expected to
-uphold this code.**
+// 执行推理
+bool success = TfLiteGpuModelInvokeTexture(model, texture_id, width, height);
+```
 
-**We use [GitHub Issues](https://github.com/tensorflow/tensorflow/issues) for
-tracking requests and bugs, please see
-[TensorFlow Forum](https://discuss.tensorflow.org/) for general questions and
-discussion, and please direct specific questions to
-[Stack Overflow](https://stackoverflow.com/questions/tagged/tensorflow).**
+### 缓冲区输入推理
 
-The TensorFlow project strives to abide by generally accepted best practices in
-open-source software development.
+```cpp
+// 准备输入数据（BHWC格式）
+std::vector<float> input_data(width * height * channels);
+// ... 填充数据 ...
 
-## Patching guidelines
+// 执行推理
+bool success = TfLiteGpuModelInvokeBuffer(model, input_data.data(), width, height, channels);
+```
 
-Follow these steps to patch a specific version of TensorFlow, for example, to
-apply fixes to bugs or security vulnerabilities:
+### SSBO绑定推理（高级用法）
 
-*   Clone the TensorFlow repository and switch to the appropriate branch for
-    your desired version—for example, `r2.8` for version 2.8.
-*   Apply the desired changes (i.e., cherry-pick them) and resolve any code
-    conflicts.
-*   Run TensorFlow tests and ensure they pass.
-*   [Build](https://www.tensorflow.org/install/source) the TensorFlow pip
-    package from source.
+```cpp
+// 绑定输入SSBO
+TfLiteGpuModelBindInputSSBO(model, input_ssbo_id);
 
-## Continuous build status
+// 绑定输出SSBO
+TfLiteGpuModelBindOutputSSBO(model, 0, output_ssbo_id);
 
-You can find more community-supported platforms and configurations in the
-[TensorFlow SIG Build Community Builds Table](https://github.com/tensorflow/build#community-supported-tensorflow-builds).
+// 执行推理（使用绑定的SSBO）
+TfLiteGpuModelInvokeTexture(model, 0, 0, 0);  // 纹理ID为0表示使用SSBO
+```
 
-### Official Builds
+## API 参考
 
-Build Type                    | Status                                                                                                                                                                           | Artifacts
------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------
-**Linux CPU**                 | [![Status](https://storage.googleapis.com/tensorflow-kokoro-build-badges/ubuntu-cc.svg)](https://storage.googleapis.com/tensorflow-kokoro-build-badges/ubuntu-cc.html)           | [PyPI](https://pypi.org/project/tf-nightly/)
-**Linux GPU**                 | [![Status](https://storage.googleapis.com/tensorflow-kokoro-build-badges/ubuntu-gpu-py3.svg)](https://storage.googleapis.com/tensorflow-kokoro-build-badges/ubuntu-gpu-py3.html) | [PyPI](https://pypi.org/project/tf-nightly-gpu/)
-**Linux XLA**                 | [![Status](https://storage.googleapis.com/tensorflow-kokoro-build-badges/ubuntu-xla.svg)](https://storage.googleapis.com/tensorflow-kokoro-build-badges/ubuntu-xla.html)         | TBA
-**macOS**                     | [![Status](https://storage.googleapis.com/tensorflow-kokoro-build-badges/macos-py2-cc.svg)](https://storage.googleapis.com/tensorflow-kokoro-build-badges/macos-py2-cc.html)     | [PyPI](https://pypi.org/project/tf-nightly/)
-**Windows CPU**               | [![Status](https://storage.googleapis.com/tensorflow-kokoro-build-badges/windows-cpu.svg)](https://storage.googleapis.com/tensorflow-kokoro-build-badges/windows-cpu.html)       | [PyPI](https://pypi.org/project/tf-nightly/)
-**Windows GPU**               | [![Status](https://storage.googleapis.com/tensorflow-kokoro-build-badges/windows-gpu.svg)](https://storage.googleapis.com/tensorflow-kokoro-build-badges/windows-gpu.html)       | [PyPI](https://pypi.org/project/tf-nightly-gpu/)
-**Android**                   | [![Status](https://storage.googleapis.com/tensorflow-kokoro-build-badges/android.svg)](https://storage.googleapis.com/tensorflow-kokoro-build-badges/android.html)               | [Download](https://bintray.com/google/tensorflow/tensorflow/_latestVersion)
-**Raspberry Pi 0 and 1**      | [![Status](https://storage.googleapis.com/tensorflow-kokoro-build-badges/rpi01-py3.svg)](https://storage.googleapis.com/tensorflow-kokoro-build-badges/rpi01-py3.html)           | [Py3](https://storage.googleapis.com/tensorflow-nightly/tensorflow-1.10.0-cp34-none-linux_armv6l.whl)
-**Raspberry Pi 2 and 3**      | [![Status](https://storage.googleapis.com/tensorflow-kokoro-build-badges/rpi23-py3.svg)](https://storage.googleapis.com/tensorflow-kokoro-build-badges/rpi23-py3.html)           | [Py3](https://storage.googleapis.com/tensorflow-nightly/tensorflow-1.10.0-cp34-none-linux_armv7l.whl)
-**Libtensorflow MacOS CPU**   | Status Temporarily Unavailable                                                                                                                                                   | [Nightly Binary](https://storage.googleapis.com/libtensorflow-nightly/prod/tensorflow/release/macos/latest/macos_cpu_libtensorflow_binaries.tar.gz) [Official GCS](https://storage.googleapis.com/tensorflow/)
-**Libtensorflow Linux CPU**   | Status Temporarily Unavailable                                                                                                                                                   | [Nightly Binary](https://storage.googleapis.com/libtensorflow-nightly/prod/tensorflow/release/ubuntu_16/latest/cpu/ubuntu_cpu_libtensorflow_binaries.tar.gz) [Official GCS](https://storage.googleapis.com/tensorflow/)
-**Libtensorflow Linux GPU**   | Status Temporarily Unavailable                                                                                                                                                   | [Nightly Binary](https://storage.googleapis.com/libtensorflow-nightly/prod/tensorflow/release/ubuntu_16/latest/gpu/ubuntu_gpu_libtensorflow_binaries.tar.gz) [Official GCS](https://storage.googleapis.com/tensorflow/)
-**Libtensorflow Windows CPU** | Status Temporarily Unavailable                                                                                                                                                   | [Nightly Binary](https://storage.googleapis.com/libtensorflow-nightly/prod/tensorflow/release/windows/latest/cpu/windows_cpu_libtensorflow_binaries.tar.gz) [Official GCS](https://storage.googleapis.com/tensorflow/)
-**Libtensorflow Windows GPU** | Status Temporarily Unavailable                                                                                                                                                   | [Nightly Binary](https://storage.googleapis.com/libtensorflow-nightly/prod/tensorflow/release/windows/latest/gpu/windows_gpu_libtensorflow_binaries.tar.gz) [Official GCS](https://storage.googleapis.com/tensorflow/)
+### 数据类型
 
-## Resources
+#### TfLiteGpuPriority
+GPU推理优先级：
+- `TFLITE_GPU_PRIORITY_AUTO`: 自动选择
+- `TFLITE_GPU_PRIORITY_MAX_PRECISION`: 最大精度
+- `TFLITE_GPU_PRIORITY_MIN_LATENCY`: 最小延迟
+- `TFLITE_GPU_PRIORITY_MIN_MEMORY_USAGE`: 最小内存使用
 
-*   [TensorFlow.org](https://www.tensorflow.org)
-*   [TensorFlow Tutorials](https://www.tensorflow.org/tutorials/)
-*   [TensorFlow Official Models](https://github.com/tensorflow/models/tree/master/official)
-*   [TensorFlow Examples](https://github.com/tensorflow/examples)
-*   [TensorFlow Codelabs](https://codelabs.developers.google.com/?cat=TensorFlow)
-*   [TensorFlow Blog](https://blog.tensorflow.org)
-*   [Learn ML with TensorFlow](https://www.tensorflow.org/resources/learn-ml)
-*   [TensorFlow Twitter](https://twitter.com/tensorflow)
-*   [TensorFlow YouTube](https://www.youtube.com/channel/UC0rqucBdTuFTjJiefW5t-IQ)
-*   [TensorFlow model optimization roadmap](https://www.tensorflow.org/model_optimization/guide/roadmap)
-*   [TensorFlow White Papers](https://www.tensorflow.org/about/bib)
-*   [TensorBoard Visualization Toolkit](https://github.com/tensorflow/tensorboard)
-*   [TensorFlow Code Search](https://cs.opensource.google/tensorflow/tensorflow)
+#### TfLiteInputType
+输入数据类型：
+- `TFLITE_INPUT_TEXTURE_2D`: OpenGL纹理输入
+- `TFLITE_INPUT_BUFFER`: 内存缓冲区输入
 
-Learn more about the
-[TensorFlow Community](https://www.tensorflow.org/community) and how to
-[Contribute](https://www.tensorflow.org/community/contribute).
+#### TfLiteInput
+输入数据结构，支持纹理和缓冲区两种输入方式。
 
-## Courses
+#### TfLiteOutput
+输出数据结构，包含输出数据指针和维度信息。
 
-* [Coursera](https://www.coursera.org/search?query=TensorFlow)
-* [Udacity](https://www.udacity.com/courses/all?search=TensorFlow)
-* [Edx](https://www.edx.org/search?q=TensorFlow)
+### 函数接口
 
-## License
+#### TfLiteGpuModelCreate
+```cpp
+TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path, TfLiteGpuPriority priority);
+```
+创建GPU模型实例。
 
-[Apache License 2.0](LICENSE)
+**参数：**
+- `model_path`: TFLite模型文件路径
+- `priority`: GPU推理优先级
+
+**返回值：**
+- 成功：模型句柄
+- 失败：NULL
+
+#### TfLiteGpuModelInvokeTexture
+```cpp
+bool TfLiteGpuModelInvokeTexture(TfLiteGpuModel model, uint32_t texture_id, int width, int height);
+```
+使用OpenGL纹理进行推理。
+
+**参数：**
+- `model`: 模型句柄
+- `texture_id`: OpenGL纹理ID
+- `width`: 纹理宽度
+- `height`: 纹理高度
+
+**返回值：**
+- 成功：true
+- 失败：false
+
+#### TfLiteGpuModelInvokeBuffer
+```cpp
+bool TfLiteGpuModelInvokeBuffer(TfLiteGpuModel model, const void* input_data, int width, int height, int channels);
+```
+使用内存缓冲区进行推理。
+
+**参数：**
+- `model`: 模型句柄
+- `input_data`: 输入数据指针（float32 BHWC格式）
+- `width`: 输入宽度
+- `height`: 输入高度
+- `channels`: 输入通道数
+
+**返回值：**
+- 成功：true
+- 失败：false
+
+#### TfLiteGpuModelBindInputSSBO
+```cpp
+bool TfLiteGpuModelBindInputSSBO(TfLiteGpuModel model, uint32_t ssbo_id);
+```
+绑定输入SSBO。
+
+#### TfLiteGpuModelBindOutputSSBO
+```cpp
+bool TfLiteGpuModelBindOutputSSBO(TfLiteGpuModel model, int index, uint32_t ssbo_id);
+```
+绑定输出SSBO。
+
+#### TfLiteGpuModelGetOutput
+```cpp
+bool TfLiteGpuModelGetOutput(TfLiteGpuModel model, TfLiteOutputs* outputs);
+```
+获取推理输出。
+
+**参数：**
+- `model`: 模型句柄
+- `outputs`: 输出结构体指针
+
+**返回值：**
+- 成功：true
+- 失败：false
+
+#### TfLiteGpuModelDelete
+```cpp
+void TfLiteGpuModelDelete(TfLiteGpuModel model);
+```
+释放模型资源。
+
+#### TfLiteWrapperVersion
+```cpp
+const char* TfLiteWrapperVersion();
+```
+获取库版本号。
+
+## 实现细节
+
+### 纹理到SSBO转换
+
+包装器使用计算着色器将OpenGL纹理数据转换为SSBO格式，支持以下转换：
+
+- RGBA纹理 → BHWC格式SSBO
+- 支持1、3、4通道输出
+- 自动处理数据格式转换
+
+### GPU推理流程
+
+1. 初始化TFLite GPU Runner
+2. 创建输入/输出SSBO
+3. 将纹理数据转换为SSBO格式
+4. 绑定SSBO到TFLite GPU Runner
+5. 执行GPU推理
+6. 从输出SSBO读取结果
+
+### 内存管理
+
+- 所有GPU资源在GL上下文中管理
+- 自动清理SSBO和着色器资源
+- 支持多线程安全（每个线程独立的GL上下文）
+
+## 示例程序
+
+项目包含以下示例程序：
+
+- `example_usage.cpp`: 基本使用示例
+- `test_wrapper.cpp`: 单元测试程序
+
+## 注意事项
+
+1. 确保OpenGL上下文已正确初始化
+2. 纹理格式应为RGBA32F或兼容格式
+3. 输入数据应为BHWC格式（Batch, Height, Width, Channels）
+4. 输出数据通过SSBO映射，注意内存访问权限
+
+## 许可证
+
+Apache License 2.0
