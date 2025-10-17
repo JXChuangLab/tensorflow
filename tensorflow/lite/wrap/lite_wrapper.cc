@@ -15,6 +15,20 @@
 #include "tensorflow/lite/kernels/register.h"
 #include "tensorflow/lite/model.h"
 
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define LOG_TAG "LiteWrapper"
+#define LOGD(...) __android_log_print(ANDROID_LOG_DEBUG, LOG_TAG, __VA_ARGS__)
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
+#define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
+#define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
+#else
+#define LOGD(...)
+#define LOGI(...)
+#define LOGW(...)
+#define LOGE(...)
+#endif
+
 namespace tg = tflite::gpu;
 namespace gl = tflite::gpu::gl;
 
@@ -69,10 +83,11 @@ extern "C" {
 TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path,
                                                        TfLiteGpuPriority priority) {
   if (!model_path) return nullptr;
+  LOGI("Create model: %s", model_path ? model_path : "(null)");
 
   auto* impl = new LiteGpuModelImpl();
   impl->model = tflite::FlatBufferModel::BuildFromFile(model_path);
-  if (!impl->model) { delete impl; return nullptr; }
+  if (!impl->model) { LOGE("Load model failed"); delete impl; return nullptr; }
 
   // 将 FlatBuffer 模型转换为 GPU Graph
   tg::GraphFloat32 graph;
@@ -80,14 +95,14 @@ TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path,
   auto mb = tg::BuildFromFlatBuffer(*impl->model, resolver, &graph,
                                     /*allow_quant_ops=*/true,
                                     /*apply_model_transformations=*/true);
-  if (!mb.ok()) { delete impl; return nullptr; }
+  if (!mb.ok()) { LOGE("BuildFromFlatBuffer failed: %s", mb.message().data()); delete impl; return nullptr; }
 
   // 创建 GL 环境
   std::unique_ptr<gl::InferenceEnvironment> env;
   gl::InferenceEnvironmentOptions env_opts;
   gl::InferenceEnvironmentProperties props;
   auto env_status = gl::NewInferenceEnvironment(env_opts, &env, &props);
-  if (!env_status.ok() || !env) { delete impl; return nullptr; }
+  if (!env_status.ok() || !env) { LOGE("NewInferenceEnvironment failed: %s", env_status.message().data()); delete impl; return nullptr; }
 
   // 选项
   gl::InferenceOptions gl_opts;
@@ -96,7 +111,7 @@ TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path,
   // Builder
   std::unique_ptr<tflite::gpu::InferenceBuilder> builder;
   auto nb = env->NewInferenceBuilder(std::move(graph), gl_opts, &builder);
-  if (!nb.ok() || !builder) { delete impl; return nullptr; }
+  if (!nb.ok() || !builder) { LOGE("NewInferenceBuilder failed: %s", nb.message().data()); delete impl; return nullptr; }
 
   // 输入定义：外部提供 OPENGL_SSBO；布局 DHWC4；数据类型按精度选择
   tg::ObjectDef in_def;
@@ -106,13 +121,13 @@ TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path,
   in_def.user_provided = true;
 
   auto input_defs = builder->inputs();
-  if (input_defs.empty()) { delete impl; return nullptr; }
+  if (input_defs.empty()) { LOGE("No inputs in graph"); delete impl; return nullptr; }
   impl->input_w = input_defs[0].dimensions.w;
   impl->input_h = input_defs[0].dimensions.h;
   impl->input_c = input_defs[0].dimensions.c;
 
   auto si = builder->SetInputObjectDef(0, in_def);
-  if (!si.ok()) { delete impl; return nullptr; }
+  if (!si.ok()) { LOGE("SetInputObjectDef failed: %s", si.message().data()); delete impl; return nullptr; }
 
   // 输出定义：使用 CPU_MEMORY，方便 CPU 侧直接读取（MediaPipe 也是 SSBO/CPU 方案）
   tg::ObjectDef out_def;
@@ -124,13 +139,13 @@ TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path,
   auto outs = builder->outputs();
   for (int i = 0; i < outs.size(); ++i) {
     auto so = builder->SetOutputObjectDef(i, out_def);
-    if (!so.ok()) { delete impl; return nullptr; }
+    if (!so.ok()) { LOGE("SetOutputObjectDef[%d] failed: %s", i, so.message().data()); delete impl; return nullptr; }
   }
 
   // 构建 Runner
   std::unique_ptr<tflite::gpu::InferenceRunner> runner;
   auto br = builder->Build(&runner);
-  if (!br.ok() || !runner) { delete impl; return nullptr; }
+  if (!br.ok() || !runner) { LOGE("Build runner failed: %s", br.message().data()); delete impl; return nullptr; }
 
   impl->env = std::move(env);
   impl->builder = std::move(builder);
@@ -143,8 +158,8 @@ TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeTexture(TfLiteGpuModel model,
                                                     uint32_t texture_id,
                                                     int width, int height) {
   auto* impl = static_cast<LiteGpuModelImpl*>(model);
-  if (!impl || !impl->runner) return false;
-  if (width != impl->input_w || height != impl->input_h) return false;
+  if (!impl || !impl->runner) { LOGE("InvokeTexture: invalid runner"); return false; }
+  if (width != impl->input_w || height != impl->input_h) { LOGE("InvokeTexture: size mismatch %dx%d vs %dx%d", width, height, impl->input_w, impl->input_h); return false; }
 
   // 1) 创建/复用 SSBO
   const int channels = impl->input_c > 0 ? impl->input_c : 4;
@@ -187,13 +202,13 @@ TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeTexture(TfLiteGpuModel model,
     glShaderSource(shader, 1, &cs, nullptr);
     glCompileShader(shader);
     GLint ok = GL_FALSE; glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
-    if (!ok) { glDeleteShader(shader); return false; }
+    if (!ok) { LOGE("Compute shader compile failed"); glDeleteShader(shader); return false; }
     impl->convert_program = glCreateProgram();
     glAttachShader(impl->convert_program, shader);
     glLinkProgram(impl->convert_program);
     glDeleteShader(shader);
     glGetProgramiv(impl->convert_program, GL_LINK_STATUS, &ok);
-    if (!ok) { glDeleteProgram(impl->convert_program); impl->convert_program=0; return false; }
+    if (!ok) { LOGE("Program link failed"); glDeleteProgram(impl->convert_program); impl->convert_program=0; return false; }
   }
 
   // 3) 绑定纹理为 image0，绑定 SSBO 为 binding=1，调度计算
@@ -217,31 +232,34 @@ TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeTexture(TfLiteGpuModel model,
   tg::OpenGlBuffer buffer; buffer.id = impl->input_ssbo;
   tg::TensorObject in_obj = buffer;
   auto si = impl->runner->SetInputObject(0, in_obj);
-  if (!si.ok()) return false;
+  if (!si.ok()) { LOGE("SetInputObject(SSBO) failed: %s", si.message().data()); return false; }
 
   auto rs = impl->runner->Run();
-  return rs.ok();
+  if (!rs.ok()) { LOGE("runner->Run failed: %s", rs.message().data()); return false; }
+  return true;
 }
 
 TFLITE_WRAP_EXPORT bool TfLiteGpuModelBindInputSSBO(TfLiteGpuModel model,
                                                     uint32_t ssbo_id) {
   auto* impl = static_cast<LiteGpuModelImpl*>(model);
-  if (!impl || !impl->runner) return false;
+  if (!impl || !impl->runner) { LOGE("BindInputSSBO: invalid runner"); return false; }
   tg::OpenGlBuffer buffer; buffer.id = static_cast<GLuint>(ssbo_id);
   tg::TensorObject in_obj = buffer;
   auto si = impl->runner->SetInputObject(0, in_obj);
-  return si.ok();
+  if (!si.ok()) { LOGE("BindInputSSBO failed: %s", si.message().data()); return false; }
+  return true;
 }
 
 TFLITE_WRAP_EXPORT bool TfLiteGpuModelBindOutputSSBO(TfLiteGpuModel model,
                                                      int index,
                                                      uint32_t ssbo_id) {
   auto* impl = static_cast<LiteGpuModelImpl*>(model);
-  if (!impl || !impl->runner) return false;
+  if (!impl || !impl->runner) { LOGE("BindOutputSSBO: invalid runner"); return false; }
   tg::OpenGlBuffer buffer; buffer.id = static_cast<GLuint>(ssbo_id);
   tg::TensorObject out_obj = buffer;
   auto so = impl->runner->SetOutputObject(index, out_obj);
-  return so.ok();
+  if (!so.ok()) { LOGE("BindOutputSSBO failed: %s", so.message().data()); return false; }
+  return true;
 }
 
 TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeBuffer(TfLiteGpuModel model,
@@ -249,7 +267,7 @@ TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeBuffer(TfLiteGpuModel model,
                                                    int width, int height,
                                                    int channels) {
   auto* impl = static_cast<LiteGpuModelImpl*>(model);
-  if (!impl || !impl->runner || !input_data) return false;
+  if (!impl || !impl->runner || !input_data) { LOGE("InvokeBuffer: invalid args"); return false; }
 
   // 用 CPU_MEMORY 作为输入对象（让 TFLite GPU 执行必要的转换），非零拷贝但兼容 CPU 输入路径。
   tg::ObjectDef in_def;
@@ -259,37 +277,34 @@ TFLITE_WRAP_EXPORT bool TfLiteGpuModelInvokeBuffer(TfLiteGpuModel model,
   in_def.user_provided = true;
 
   // 检查形状一致
-  if (width != impl->input_w || height != impl->input_h) {
-    return false;
-  }
-  if (channels != impl->input_c && channels != 3 && channels != 4) {
-    return false;
-  }
+  if (width != impl->input_w || height != impl->input_h) { LOGE("InvokeBuffer: size mismatch %dx%d vs %dx%d", width, height, impl->input_w, impl->input_h); return false; }
+  if (channels != impl->input_c && channels != 3 && channels != 4) { LOGE("InvokeBuffer: channels unsupported %d", channels); return false; }
 
   tg::CpuMemory cpu_mem{const_cast<void*>(input_data),
                         static_cast<size_t>(width * height * channels * sizeof(float))};
   tg::TensorObject obj = cpu_mem;
   auto si = impl->runner->SetInputObject(0, obj);
-  if (!si.ok()) return false;
+  if (!si.ok()) { LOGE("SetInputObject(CPU) failed: %s", si.message().data()); return false; }
   auto rs = impl->runner->Run();
-  return rs.ok();
+  if (!rs.ok()) { LOGE("runner->Run failed: %s", rs.message().data()); return false; }
+  return true;
 }
 
 TFLITE_WRAP_EXPORT bool TfLiteGpuModelGetOutput(TfLiteGpuModel model,
                                                 TfLiteOutputs* outputs) {
   auto* impl = static_cast<LiteGpuModelImpl*>(model);
-  if (!impl || !impl->runner || !impl->builder || !outputs) return false;
+  if (!impl || !impl->runner || !impl->builder || !outputs) { LOGE("GetOutput: invalid args"); return false; }
 
   auto out_defs = impl->builder->outputs();
   const int num = static_cast<int>(out_defs.size());
-  if (outputs->size <= 0 || outputs->outputs == nullptr) return false;
+  if (outputs->size <= 0 || outputs->outputs == nullptr) { LOGE("GetOutput: outputs buffer missing"); return false; }
   const int cap = outputs->size;
   int filled = 0;
   for (int i = 0; i < num && i < cap; ++i) {
     tg::TensorObject obj;
     auto st = impl->runner->GetOutputObject(i, &obj);
-    if (!st.ok()) return false;
-    if (!std::holds_alternative<tg::CpuMemory>(obj)) return false;
+    if (!st.ok()) { LOGE("GetOutputObject[%d] failed: %s", i, st.message().data()); return false; }
+    if (!std::holds_alternative<tg::CpuMemory>(obj)) { LOGE("GetOutput: not CPU memory"); return false; }
     const tg::CpuMemory& mem = std::get<tg::CpuMemory>(obj);
 
     TfLiteOutput& out = outputs->outputs[i];
@@ -301,7 +316,8 @@ TFLITE_WRAP_EXPORT bool TfLiteGpuModelGetOutput(TfLiteGpuModel model,
     ++filled;
   }
   outputs->size = filled;
-  return filled > 0;
+  if (filled <= 0) { LOGE("GetOutput: no outputs"); return false; }
+  return true;
 }
 
 TFLITE_WRAP_EXPORT void TfLiteGpuModelDelete(TfLiteGpuModel model) {
