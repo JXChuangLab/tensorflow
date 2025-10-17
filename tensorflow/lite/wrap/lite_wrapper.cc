@@ -113,44 +113,34 @@ TFLITE_WRAP_EXPORT TfLiteGpuModel TfLiteGpuModelCreate(const char* model_path,
   auto nb = env->NewInferenceBuilder(std::move(graph), gl_opts, &builder);
   if (!nb.ok() || !builder) { LOGE("NewInferenceBuilder failed: %s", nb.message().data()); delete impl; return nullptr; }
 
-  // 输入定义：外部提供 OPENGL_SSBO；布局 DHWC4；数据类型固定为 FLOAT32（与内部一致，避免不支持的转换）
-  tg::ObjectDef in_def;
-  in_def.data_type = tg::DataType::FLOAT32;
-  in_def.data_layout = tg::DataLayout::DHWC4;
-  in_def.object_type = tg::ObjectType::OPENGL_SSBO;
-  in_def.user_provided = true;
-
   auto input_defs = builder->inputs();
   if (input_defs.empty()) { LOGE("No inputs in graph"); delete impl; return nullptr; }
   impl->input_w = input_defs[0].dimensions.w;
   impl->input_h = input_defs[0].dimensions.h;
   impl->input_c = input_defs[0].dimensions.c;
-
-  LOGI("SetInputObjectDef: obj=SSBO, layout=DHWC4, dtype=F32, dims=%dx%dx%d",
+  // 不显式更改输入外部对象定义，使用后端默认值（通常为 F32/DHWC4/SSBO 且 user_provided=true），避免兼容性问题。
+  LOGI("Using default input object def from backend: dims=%dx%dx%d",
        impl->input_w, impl->input_h, impl->input_c);
-  auto si = builder->SetInputObjectDef(0, in_def);
-  if (!si.ok()) { LOGE("SetInputObjectDef failed: %s", si.message().data()); delete impl; return nullptr; }
 
-  // 输出定义：优先使用 OPENGL_SSBO（与编译器默认一致），如需 CPU 读回可在 GetOutput 时转换
+  // 输出定义：优先使用 CPU_MEMORY，便于 CPU 读取；如不支持再回退 SSBO
   tg::ObjectDef out_def;
   out_def.data_type = tg::DataType::FLOAT32;
-  out_def.data_layout = tg::DataLayout::DHWC4;
-  out_def.object_type = tg::ObjectType::OPENGL_SSBO;
-  out_def.user_provided = true;  // 允许绑定输出 SSBO；若不绑定则内部可能分配
+  out_def.data_layout = tg::DataLayout::BHWC;
+  out_def.object_type = tg::ObjectType::CPU_MEMORY;
+  out_def.user_provided = false;
 
   auto outs = builder->outputs();
   for (int i = 0; i < outs.size(); ++i) {
     auto so = builder->SetOutputObjectDef(i, out_def);
     if (!so.ok()) {
-      LOGW("SetOutputObjectDef[%d] as SSBO not supported, fallback CPU_MEMORY", i);
-      // 回退为 CPU 内存
-      tg::ObjectDef out_cpu;
-      out_cpu.data_type = tg::DataType::FLOAT32;
-      out_cpu.data_layout = tg::DataLayout::BHWC;
-      out_cpu.object_type = tg::ObjectType::CPU_MEMORY;
-      out_cpu.user_provided = false;
-      auto so2 = builder->SetOutputObjectDef(i, out_cpu);
-      if (!so2.ok()) { LOGE("SetOutputObjectDef[%d] CPU failed: %s", i, so2.message().data()); delete impl; return nullptr; }
+      LOGW("SetOutputObjectDef[%d] CPU_MEMORY not supported, fallback SSBO", i);
+      tg::ObjectDef out_ssbo;
+      out_ssbo.data_type = tg::DataType::FLOAT32;
+      out_ssbo.data_layout = tg::DataLayout::DHWC4;
+      out_ssbo.object_type = tg::ObjectType::OPENGL_SSBO;
+      out_ssbo.user_provided = true;
+      auto so2 = builder->SetOutputObjectDef(i, out_ssbo);
+      if (!so2.ok()) { LOGE("SetOutputObjectDef[%d] SSBO failed: %s", i, so2.message().data()); delete impl; return nullptr; }
     }
   }
 
